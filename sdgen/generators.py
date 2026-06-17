@@ -43,6 +43,12 @@ class ValueGenerator:
 
 
 def make_generator(col: ColumnSpec, rng: random.Random, faker) -> ValueGenerator:
+    # An explicit value domain ("expected values" / allowed_values) wins over the
+    # declared type, so values entered in the Schema editor or config are honoured
+    # even when the column's type wasn't switched to `enum`. Without this, e.g. a
+    # `string` column with allowed_values would emit random strings instead.
+    if col.allowed_values and col.type != LogicalType.ENUM:
+        return REGISTRY[LogicalType.ENUM](col, rng, faker)
     cls = REGISTRY.get(col.type, REGISTRY[LogicalType.STRING])
     return cls(col, rng, faker)
 
