@@ -24,7 +24,7 @@ from sdgen.presets import PRESET_COLUMNS, list_presets, preset_config
 from sdgen.types import COVERAGE_MODES, LogicalType, DirtyKind
 
 try:
-    from sdgen.importers import parse_ddl, parse_sqlloader_ctl, parse_axiom_xml
+    from sdgen.importers import parse_ddl, parse_sqlloader_ctl, parse_xml
     _HAS_DDL = True
 except Exception:
     _HAS_DDL = False
@@ -348,11 +348,15 @@ with tab_import:
         "Oracle SQL*Loader (.ctl)": ("ctl",
             "LOAD DATA INTO TABLE my_feed\nFIELDS TERMINATED BY '|'\nTRAILING NULLCOLS (\n"
             "  RetPrcnt,\n  AppTyp CHAR (10),\n  ExpOfISAmt,\n  MatDt DATE 'dd/mm/yyyy'\n)"),
-        "Axiom DataSource (XML)": ("axiom",
-            '<object type="DataSource">\n  <property name="name" value="my_feed"/>\n'
-            '  <object type="DataSource:field">\n    <property name="name" value="AxiomIndex"/>\n'
-            '    <property name="type" value="INTEGER"/>\n    <property name="allowNulls" value="true"/>\n'
-            "  </object>\n</object>"),
+        "XML (Axiom / XSD / sample)": ("xml",
+            '<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">\n'
+            '  <xs:element name="my_feed"><xs:complexType><xs:sequence>\n'
+            '    <xs:element name="id" type="xs:integer"/>\n'
+            '    <xs:element name="amount" type="xs:decimal" minOccurs="0"/>\n'
+            '    <xs:element name="status"><xs:simpleType><xs:restriction base="xs:string">\n'
+            '      <xs:enumeration value="A"/><xs:enumeration value="B"/>\n'
+            '    </xs:restriction></xs:simpleType></xs:element>\n'
+            '  </xs:sequence></xs:complexType></xs:element>\n</xs:schema>'),
     }
     if not _HAS_DDL:
         st.warning("Importers need `simple-ddl-parser` (pip install -r requirements.txt).")
@@ -368,7 +372,7 @@ with tab_import:
             try:
                 cfg = (parse_ddl(src) if kind == "ddl"
                        else parse_sqlloader_ctl(src) if kind == "ctl"
-                       else parse_axiom_xml(src))
+                       else parse_xml(src))
                 st.session_state.config_json = cfg.to_json()
                 ncol = sum(len(t.columns) for t in cfg.tables)
                 st.toast(f"Imported {len(cfg.tables)} table(s) · {ncol} columns", icon="📥")

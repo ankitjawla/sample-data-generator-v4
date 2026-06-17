@@ -357,3 +357,164 @@ def parse_axiom_xml(xml_text: str, apply_heuristics: bool = True, seed: int = 42
         raise ValueError("No <object type='DataSource:field'> entries found in the Axiom XML.")
     return GenerationConfig(tables=[TableSpec(name=table, rows=1000, columns=cols)],
                             seed=seed, dirty_ratio=dirty_ratio)
+
+
+# ---------------------------------------------------------------------------
+# Generic XML schema extraction (Axiom DataSource / XSD / sample XML)
+# ---------------------------------------------------------------------------
+_XSD_NS = "http://www.w3.org/2001/XMLSchema"
+
+
+def _localname(tag: str) -> str:
+    return str(tag).rsplit("}", 1)[-1]
+
+
+def _xsd_type(t: Optional[str]) -> LogicalType:
+    u = str(t or "").split(":")[-1].lower()
+    if u in {"integer", "int", "long", "short", "byte", "nonnegativeinteger",
+             "positiveinteger", "unsignedint", "unsignedlong"}:
+        return LogicalType.INTEGER
+    if u in {"decimal", "double", "float"}:
+        return LogicalType.DECIMAL
+    if u in {"boolean"}:
+        return LogicalType.BOOLEAN
+    if u in {"date", "gyear", "gyearmonth"}:
+        return LogicalType.DATE
+    if u in {"datetime", "time"}:
+        return LogicalType.DATETIME
+    return LogicalType.STRING
+
+
+def _infer_type(values: List[str]) -> Tuple[LogicalType, List[Any]]:
+    vals = [v for v in (str(x).strip() for x in values) if v not in ("", "None")]
+    if not vals:
+        return LogicalType.STRING, []
+
+    def _is_int(s):
+        try:
+            int(s); return True
+        except ValueError:
+            return False
+
+    def _is_float(s):
+        try:
+            float(s); return True
+        except ValueError:
+            return False
+
+    if all(_is_int(v) for v in vals):
+        return LogicalType.INTEGER, []
+    if all(_is_float(v) for v in vals):
+        return LogicalType.DECIMAL, []
+    if all(re.match(r"^\d{4}-\d{2}-\d{2}$", v) for v in vals):
+        return LogicalType.DATE, []
+    if all(re.match(r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}", v) for v in vals):
+        return LogicalType.DATETIME, []
+    distinct = sorted({v for v in vals})
+    if 1 < len(distinct) <= 8:  # low cardinality -> categorical with expected values
+        return LogicalType.ENUM, distinct
+    return LogicalType.STRING, []
+
+
+def parse_xsd(root, apply_heuristics: bool = True, seed: int = 42,
+              dirty_ratio: float = 0.05) -> GenerationConfig:
+    """Parse an XSD (XML Schema) into a GenerationConfig."""
+    ns = "{" + _XSD_NS + "}"
+    table = "xml_table"
+    cols: List[ColumnSpec] = []
+    for e in root.iter():
+        if _localname(e.tag) != "element":
+            continue
+        name = e.get("name")
+        if not name:
+            continue
+        typ = e.get("type")
+        restr = e.find(f"./{ns}simpleType/{ns}restriction")  # direct, not descendant
+        if typ is None and restr is None:
+            if e.find(f"./{ns}complexType") is not None and table == "xml_table":
+                table = _strip(name)  # the record/wrapper element
+            continue
+        col = ColumnSpec(name=_strip(name),
+                         type=_xsd_type(typ or (restr.get("base") if restr is not None else None)))
+        if e.get("minOccurs") == "0" or str(e.get("nillable", "")).lower() == "true":
+            col.nullable = True
+        if restr is not None:
+            enums = [x.get("value") for x in restr.findall(f"{ns}enumeration") if x.get("value") is not None]
+            if enums:
+                col.type = LogicalType.ENUM
+                col.allowed_values = enums
+            ml = restr.find(f"{ns}maxLength")
+            if ml is not None and ml.get("value") and col.type == LogicalType.STRING:
+                col.max_length = int(ml.get("value"))
+        if apply_heuristics and col.type == LogicalType.STRING:
+            col.type = _refine(col.name, col.max_length)
+        cols.append(col)
+    if not cols:
+        raise ValueError("No <xs:element> field definitions found in the XSD.")
+    return GenerationConfig(tables=[TableSpec(name=table, rows=1000, columns=cols)],
+                            seed=seed, dirty_ratio=dirty_ratio)
+
+
+def parse_xml_sample(root, apply_heuristics: bool = True, seed: int = 42,
+                     dirty_ratio: float = 0.05) -> GenerationConfig:
+    """Infer a schema from a sample XML data document (repeated record elements)."""
+    from collections import Counter, OrderedDict
+
+    candidates: Counter = Counter()
+    for parent in root.iter():
+        counts = Counter(_localname(c.tag) for c in list(parent))
+        for tag, n in counts.items():
+            if n >= 2:
+                candidates[tag] += n
+    if candidates:
+        rec_tag = candidates.most_common(1)[0][0]
+        records = [e for e in root.iter() if _localname(e.tag) == rec_tag]
+        table = rec_tag
+    else:
+        records = [root]
+        table = _localname(root.tag)
+
+    fields: "OrderedDict[str, List[str]]" = OrderedDict()
+    for rec in records[:100]:
+        for a, v in rec.attrib.items():
+            fields.setdefault(_localname(a), []).append(v)
+        for child in list(rec):
+            if len(list(child)) == 0:  # leaf element only
+                fields.setdefault(_localname(child.tag), []).append((child.text or "").strip())
+    if not fields:
+        raise ValueError("Could not infer any fields from the XML sample.")
+
+    cols: List[ColumnSpec] = []
+    for name, vals in fields.items():
+        lt, enum_vals = _infer_type(vals)
+        col = ColumnSpec(name=_strip(name), type=lt)
+        if enum_vals:
+            col.allowed_values = enum_vals
+        if apply_heuristics and col.type == LogicalType.STRING:
+            col.type = _refine(col.name, None)
+        cols.append(col)
+    return GenerationConfig(tables=[TableSpec(name=table, rows=1000, columns=cols)],
+                            seed=seed, dirty_ratio=dirty_ratio)
+
+
+def parse_xml(xml_text: str, apply_heuristics: bool = True, seed: int = 42,
+              dirty_ratio: float = 0.05) -> GenerationConfig:
+    """Extract a schema from XML — auto-detects Axiom DataSource, XSD, or sample data."""
+    import xml.etree.ElementTree as ET
+
+    txt = xml_text.strip()
+    if "DataSource:field" in txt or 'type="DataSource"' in txt or "type='DataSource'" in txt:
+        return parse_axiom_xml(txt, apply_heuristics, seed, dirty_ratio)
+    try:
+        root = ET.fromstring(txt)
+    except ET.ParseError:
+        try:
+            root = ET.fromstring(f"<root>{txt}</root>")
+        except ET.ParseError as exc:
+            raise ValueError(f"Could not parse XML: {exc}") from exc
+
+    is_xsd = (_localname(root.tag).lower() == "schema"
+              or any(str(e.tag).startswith("{" + _XSD_NS + "}") for e in root.iter()))
+    if is_xsd:
+        return parse_xsd(root, apply_heuristics, seed, dirty_ratio)
+    return parse_xml_sample(root, apply_heuristics, seed, dirty_ratio)

@@ -12,7 +12,7 @@ from sdgen.model import (
     config_from_dict, load_config, validate_config,
 )
 from sdgen.engine import generate, coverage_report
-from sdgen.importers import parse_ddl, parse_sqlloader_ctl, parse_axiom_xml
+from sdgen.importers import parse_ddl, parse_sqlloader_ctl, parse_axiom_xml, parse_xml
 from sdgen.presets import preset_config, banking_dataset, EXPOSURE_CLASSES
 from sdgen.writers import write_dataset, CsvOptions
 
@@ -207,6 +207,42 @@ def test_axiom_xml_import():
     by = {c.name: c for c in t.columns}
     assert by["AxiomIndex"].type == LogicalType.SEQ_ID and by["AxiomIndex"].unique
     assert by["RetPrcnt"].type == LogicalType.DECIMAL and by["RetPrcnt"].nullable
+
+
+def test_xml_xsd_import():
+    xsd = ('<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">'
+           '<xs:element name="exposure"><xs:complexType><xs:sequence>'
+           '<xs:element name="exposure_id" type="xs:integer"/>'
+           '<xs:element name="amount" type="xs:decimal" minOccurs="0"/>'
+           '<xs:element name="booking_date" type="xs:date"/>'
+           '<xs:element name="cls"><xs:simpleType><xs:restriction base="xs:string">'
+           '<xs:enumeration value="A"/><xs:enumeration value="B"/>'
+           '</xs:restriction></xs:simpleType></xs:element>'
+           '</xs:sequence></xs:complexType></xs:element></xs:schema>')
+    cfg = parse_xml(xsd)
+    t = cfg.tables[0]
+    by = {c.name: c for c in t.columns}
+    assert t.name == "exposure"
+    assert by["exposure_id"].type == LogicalType.INTEGER
+    assert by["amount"].type == LogicalType.DECIMAL and by["amount"].nullable
+    assert by["booking_date"].type == LogicalType.DATE
+    assert by["cls"].type == LogicalType.ENUM and by["cls"].allowed_values == ["A", "B"]
+    assert len(generate(cfg)[t.name].rows) == 1000
+
+
+def test_xml_sample_import():
+    xml = ("<exposures>"
+           "<exposure><id>1</id><cls>Corporate</cls><amt>1234.50</amt><dt>2020-01-05</dt></exposure>"
+           "<exposure><id>2</id><cls>Retail</cls><amt>9.99</amt><dt>2021-06-30</dt></exposure>"
+           "<exposure><id>3</id><cls>Corporate</cls><amt>5.0</amt><dt>2019-12-31</dt></exposure>"
+           "</exposures>")
+    cfg = parse_xml(xml)
+    t = cfg.tables[0]
+    by = {c.name: c for c in t.columns}
+    assert by["id"].type == LogicalType.INTEGER
+    assert by["amt"].type == LogicalType.DECIMAL
+    assert by["dt"].type == LogicalType.DATE
+    assert by["cls"].type == LogicalType.ENUM and set(by["cls"].allowed_values) == {"Corporate", "Retail"}
 
 
 if __name__ == "__main__":
