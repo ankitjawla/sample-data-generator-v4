@@ -569,6 +569,9 @@ with tab_schema:
                    "comma-separated. `params` is JSON, e.g. "
                    '`{"min":0,"max":1000}` or `{"start":"2015-01-01","end":"today"}`. '
                    "Use the grid's ➕ / 🗑 controls to add or remove columns.")
+        st.info("💡 Setting **expected values** on a column makes the generator emit **only those "
+                "values** (categorical) — whatever the type. Then click **Apply**, and switch to "
+                "▶️ Generate to see them.")
         edited_tables = []  # (table_dict, rows_value, edited_df)
         for ti, tbl in enumerate(_schema_cfg["tables"]):
             st.markdown(f"#### 🗂️ Table: `{tbl.get('name', 'table')}`")
@@ -643,6 +646,10 @@ with tab_schema:
                     st.success(f"Applied · {len(new_cfg.tables)} table(s) · {ncols} columns. "
                                "Open the Config or ▶️ Generate tab.")
                 st.toast("Schema applied to config", icon="🧱")
+                # Reset the grid widgets so they re-seed from the canonical config
+                # (otherwise stale per-cell edits would be re-applied on top).
+                for i in range(len(edited_tables)):
+                    st.session_state.pop(f"schema_editor_{i}", None)
                 st.rerun()
             except Exception as exc:
                 st.error(f"Could not apply schema: {exc}")
@@ -662,7 +669,10 @@ with tab_config:
     if cca.button("✅ Validate"):
         try:
             errs = validate_config(config_from_dict(_current_config_dict()))
-            st.success("Config is valid.") if not errs else st.error("Issues:\n- " + "\n- ".join(errs))
+            if not errs:
+                st.success("Config is valid.")
+            else:
+                st.error("Issues:\n- " + "\n- ".join(errs))
         except Exception as e:
             st.error(f"Invalid config: {e}")
     try:
@@ -733,7 +743,10 @@ with tab_generate:
         summary = (f"Generated **{total_rows:,} rows** across **{len(datasets)} table(s)**. "
                    f"**{total_defects}** cells were deliberately corrupted and tagged in `_defect`. "
                    f"Seed **{seed_used}** — re-run with this config for identical data.")
-        (st.success if healthy else st.warning)(summary)
+        if healthy:
+            st.success(summary)
+        else:
+            st.warning(summary)
 
         m1, m2, m3, m4, m5 = st.columns(5)
         m1.metric("Tables", len(datasets))
@@ -784,7 +797,10 @@ with tab_generate:
         with cc1:
             st.markdown("**Defect breakdown** (selected table)")
             fb = _defect_breakdown(ds.rows)
-            st.bar_chart(fb, horizontal=True) if fb is not None else st.caption("No dirty rows.")
+            if fb is not None:
+                st.bar_chart(fb, horizontal=True)
+            else:
+                st.caption("No dirty rows.")
         with cc2:
             st.markdown("**Reproduce / inspect**")
             with st.popover("🔁 Reproduce this dataset"):
