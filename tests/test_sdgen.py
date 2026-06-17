@@ -12,7 +12,7 @@ from sdgen.model import (
     config_from_dict, load_config, validate_config,
 )
 from sdgen.engine import generate, coverage_report
-from sdgen.importers import parse_ddl
+from sdgen.importers import parse_ddl, parse_sqlloader_ctl, parse_axiom_xml
 from sdgen.presets import preset_config, banking_dataset, EXPOSURE_CLASSES
 from sdgen.writers import write_dataset, CsvOptions
 
@@ -179,6 +179,34 @@ def test_path_traversal_filename_sanitised(tmp_path):
     ds = generate(cfg)["exposures"]
     written = write_dataset(ds, str(tmp_path), base="../evil", formats=["csv"])
     assert os.path.dirname(os.path.abspath(written["csv"])) == str(tmp_path)
+
+
+def test_sqlloader_ctl_import():
+    ctl = ("LOAD DATA INTO TABLE @table_name\nFIELDS TERMINATED BY '|'\nTRAILING NULLCOLS (\n"
+           "  RetPrcnt,\n  AppTyp CHAR (10),\n  ExpOfISAmt,\n  MatDt DATE 'dd/mm/yyyy',\n"
+           "  ReSecFlg CHAR (1)\n)")
+    cfg = parse_sqlloader_ctl(ctl)
+    t = cfg.tables[0]
+    by = {c.name: c for c in t.columns}
+    assert by["RetPrcnt"].type == LogicalType.DECIMAL
+    assert by["AppTyp"].type == LogicalType.STRING and by["AppTyp"].max_length == 10
+    assert by["ExpOfISAmt"].type == LogicalType.DECIMAL
+    assert by["MatDt"].type == LogicalType.DATE
+    assert len(generate(cfg)[t.name].rows) == 1000
+
+
+def test_axiom_xml_import():
+    xml = ('<object type="DataSource"><property name="name" value="tr_FEED"/>'
+           '<object type="DataSource:field"><property name="name" value="AxiomIndex"/>'
+           '<property name="type" value="INTEGER"/><property name="isAutoUniqueId" value="true"/></object>'
+           '<object type="DataSource:field"><property name="name" value="RetPrcnt"/>'
+           '<property name="type" value="FLOAT"/><property name="allowNulls" value="true"/></object></object>')
+    cfg = parse_axiom_xml(xml)
+    t = cfg.tables[0]
+    assert t.name == "tr_FEED"
+    by = {c.name: c for c in t.columns}
+    assert by["AxiomIndex"].type == LogicalType.SEQ_ID and by["AxiomIndex"].unique
+    assert by["RetPrcnt"].type == LogicalType.DECIMAL and by["RetPrcnt"].nullable
 
 
 if __name__ == "__main__":

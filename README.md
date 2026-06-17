@@ -26,7 +26,8 @@ reproducible seeded output. **Pure Python, no LLM.**
 | Distributions (uniform/normal/exponential) | ✓ | partial | ✓ |
 | **Cross-column constraints** (`start <= end`) | ✓ | – | ✓ |
 | Fault/dirty taxonomy incl. `format_violation`, `broken_fk` | ✓ | ✓ | **union** |
-| DDL paste-import + banking presets | ✓ | ✓ | ✓ |
+| Schema import: DDL + **SQL*Loader .ctl** + **Axiom XML** | DDL | DDL | **all 3** |
+| Banking presets | ✓ | ✓ | ✓ |
 | Enhanced UI: Guide tab, dirty-cell highlighting, charts, KPIs | ✓ | ✓ | ✓ |
 | **Reviewed & hardened** (unique-exhaustion, path-traversal, FK determinism) | — | — | ✓ |
 
@@ -47,8 +48,11 @@ Manual: `pip install -r requirements.txt && streamlit run app.py`
 Five-step flow across four tabs:
 
 1. **🚀 Start here** — 3-step guide, one-click worked examples, glossary.
-2. **📥 Import / Presets** — paste a `CREATE TABLE` (CHECK-lists → expected
-   values, REFERENCES → foreign keys) or load a banking preset.
+2. **📥 Import / Presets** — paste an interface document in any of three formats
+   — **`CREATE TABLE` DDL**, an **Oracle SQL\*Loader `.ctl`** control file, or an
+   **Axiom `DataSource` XML** schema — and the columns/types are drafted for you
+   (CHECK-lists → expected values, REFERENCES → foreign keys, banking name
+   heuristics like `…Amt`→decimal, `…Dt`→date). Or load a banking preset.
 3. **🧩 Config (JSON/YAML)** — the reproducible source of truth; edit, validate,
    download as JSON **or** YAML.
 4. **▶️ Generate** — staged progress, **dirty cells highlighted** (🟥 corrupted ·

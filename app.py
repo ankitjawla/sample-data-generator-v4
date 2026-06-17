@@ -24,7 +24,7 @@ from sdgen.presets import PRESET_COLUMNS, list_presets, preset_config
 from sdgen.types import COVERAGE_MODES, LogicalType, DirtyKind
 
 try:
-    from sdgen.importers import parse_ddl
+    from sdgen.importers import parse_ddl, parse_sqlloader_ctl, parse_axiom_xml
     _HAS_DDL = True
 except Exception:
     _HAS_DDL = False
@@ -340,21 +340,42 @@ with tab_import:
         'Then tweak it in the <b>Config</b> tab.</div>',
         unsafe_allow_html=True)
     st.write("")
-    st.subheader("Paste a database schema (CREATE TABLE)")
+    st.subheader("Paste an interface document / schema")
+    _FORMATS = {
+        "CREATE TABLE (DDL)": ("ddl",
+            "CREATE TABLE exposures (\n  id BIGINT PRIMARY KEY,\n"
+            "  cls VARCHAR(20) CHECK (cls IN ('A','B'))\n);"),
+        "Oracle SQL*Loader (.ctl)": ("ctl",
+            "LOAD DATA INTO TABLE my_feed\nFIELDS TERMINATED BY '|'\nTRAILING NULLCOLS (\n"
+            "  RetPrcnt,\n  AppTyp CHAR (10),\n  ExpOfISAmt,\n  MatDt DATE 'dd/mm/yyyy'\n)"),
+        "Axiom DataSource (XML)": ("axiom",
+            '<object type="DataSource">\n  <property name="name" value="my_feed"/>\n'
+            '  <object type="DataSource:field">\n    <property name="name" value="AxiomIndex"/>\n'
+            '    <property name="type" value="INTEGER"/>\n    <property name="allowNulls" value="true"/>\n'
+            "  </object>\n</object>"),
+    }
     if not _HAS_DDL:
-        st.warning("DDL import needs `simple-ddl-parser` (pip install -r requirements.txt).")
+        st.warning("Importers need `simple-ddl-parser` (pip install -r requirements.txt).")
     else:
-        ddl_text = st.text_area("CREATE TABLE …", height=180, key="ddl_text", help=HELP["ddl"],
-                                placeholder="CREATE TABLE exposures (\n  id BIGINT PRIMARY KEY,\n"
-                                            "  cls VARCHAR(20) CHECK (cls IN ('A','B'))\n);")
-        if st.button("🔎 Parse DDL into config", type="primary"):
+        choice = st.segmented_control("Schema format", list(_FORMATS.keys()),
+                                      default="CREATE TABLE (DDL)") or "CREATE TABLE (DDL)"
+        kind, placeholder = _FORMATS[choice]
+        src = st.text_area(f"Paste {choice}", height=200, key="schema_src", placeholder=placeholder,
+                           help="Paste the upstream interface document. CHECK-lists / ENUMs become "
+                                "expected values; field types (and, for DDL, foreign keys) are mapped, "
+                                "with banking name heuristics (…Amt→decimal, …Dt→date).")
+        if st.button("🔎 Parse into config", type="primary"):
             try:
-                cfg = parse_ddl(ddl_text)
+                cfg = (parse_ddl(src) if kind == "ddl"
+                       else parse_sqlloader_ctl(src) if kind == "ctl"
+                       else parse_axiom_xml(src))
                 st.session_state.config_json = cfg.to_json()
-                st.toast(f"Imported {len(cfg.tables)} table(s)", icon="📥")
-                st.success(f"Imported {len(cfg.tables)} table(s). See the Config tab.")
+                ncol = sum(len(t.columns) for t in cfg.tables)
+                st.toast(f"Imported {len(cfg.tables)} table(s) · {ncol} columns", icon="📥")
+                st.success(f"Imported {len(cfg.tables)} table(s), {ncol} columns. Open the Config tab "
+                           "to refine expected values & faults, then Generate.")
             except Exception as e:
-                st.error(f"Could not parse DDL: {e}")
+                st.error(f"Could not parse: {e}")
 
     st.divider()
     st.subheader("🏦 Banking presets")
