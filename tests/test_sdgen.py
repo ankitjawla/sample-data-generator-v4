@@ -245,5 +245,27 @@ def test_xml_sample_import():
     assert by["cls"].type == LogicalType.ENUM and set(by["cls"].allowed_values) == {"Corporate", "Retail"}
 
 
+def test_allowed_values_respected_for_non_enum_type():
+    # "Expected values" entered on a plain (non-enum) column must be honoured;
+    # previously the engine emitted random strings and ignored allowed_values.
+    cfg = GenerationConfig(seed=7, tables=[TableSpec(name="t", rows=300, columns=[
+        ColumnSpec(name="cp", type=LogicalType.STRING,
+                   allowed_values=["Acme", "Globex", "Initech"]),
+    ])])
+    vals = {r["cp"] for r in generate(cfg)["t"].rows}
+    assert vals and vals.issubset({"Acme", "Globex", "Initech"}), vals
+
+
+def test_allowed_values_non_enum_covered_by_cartesian():
+    # A non-enum column with an explicit value domain participates in coverage.
+    cfg = GenerationConfig(seed=7, coverage=CoverageSpec(mode="cartesian"),
+                           tables=[TableSpec(name="t", rows=50, columns=[
+        ColumnSpec(name="cp", type=LogicalType.STRING, allowed_values=["A", "B", "C"]),
+        ColumnSpec(name="flag", type=LogicalType.BOOLEAN),
+    ])])
+    combos = {(r["cp"], r["flag"]) for r in generate(cfg)["t"].rows}
+    assert len(combos) == 6, combos  # 3 values x 2 booleans
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
