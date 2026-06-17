@@ -1,0 +1,10 @@
+# Native theme so default widgets inherit the v4 (indigo) brand.
+[theme]
+primaryColor = "#4f46e5"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#eef2ff"
+textColor = "#312e81"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false

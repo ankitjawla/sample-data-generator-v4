@@ -1,0 +1,103 @@
+{
+  "seed": 42,
+  "locale": "en_US",
+  "dirty_ratio": 0.05,
+  "default_dirty_kinds": null,
+  "coverage": {
+    "mode": "edges",
+    "columns": null,
+    "cap": 5000
+  },
+  "emit_defect_labels": true,
+  "tables": [
+    {
+      "name": "counterparties",
+      "rows": 1000,
+      "primary_key": [
+        "id"
+      ],
+      "foreign_keys": [],
+      "columns": [
+        {
+          "name": "id",
+          "type": "seq_id",
+          "unique": true
+        },
+        {
+          "name": "legal_name",
+          "type": "name",
+          "max_length": 120
+        },
+        {
+          "name": "country_code",
+          "type": "string",
+          "max_length": 2
+        },
+        {
+          "name": "sector",
+          "type": "enum",
+          "allowed_values": [
+            "Bank",
+            "Corporate",
+            "Sovereign",
+            "Household"
+          ],
+          "nullable": true
+        }
+      ]
+    },
+    {
+      "name": "exposures",
+      "rows": 1000,
+      "primary_key": [
+        "exposure_id"
+      ],
+      "foreign_keys": [
+        {
+          "column": "counterparty_id",
+          "ref_table": "counterparties",
+          "ref_column": "id"
+        }
+      ],
+      "columns": [
+        {
+          "name": "exposure_id",
+          "type": "seq_id",
+          "unique": true
+        },
+        {
+          "name": "counterparty_id",
+          "type": "integer"
+        },
+        {
+          "name": "exposure_class",
+          "type": "enum",
+          "allowed_values": [
+            "Corporate",
+            "Institution",
+            "Retail",
+            "Sovereign"
+          ]
+        },
+        {
+          "name": "on_balance_flag",
+          "type": "enum",
+          "allowed_values": [
+            "ON",
+            "OFF"
+          ],
+          "nullable": true
+        },
+        {
+          "name": "exposure_amount",
+          "type": "decimal",
+          "scale": 2
+        },
+        {
+          "name": "booking_date",
+          "type": "date"
+        }
+      ]
+    }
+  ]
+}

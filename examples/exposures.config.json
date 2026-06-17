@@ -1,0 +1,26 @@
+{
+  "seed": 42,
+  "dirty_ratio": 0.08,
+  "coverage": { "mode": "cartesian" },
+  "emit_defect_labels": true,
+  "tables": [
+    {
+      "name": "exposures",
+      "rows": 500,
+      "columns": [
+        { "name": "exposure_id", "type": "seq_id", "unique": true },
+        { "name": "exposure_class", "type": "enum",
+          "allowed_values": ["Corporate", "Institution", "Retail", "Sovereign", "CentralBank"] },
+        { "name": "on_balance_flag", "type": "enum", "allowed_values": ["ON", "OFF"],
+          "nullable": true, "null_probability": 0.05,
+          "dirty_kinds": ["null_variant", "invalid_enum_case", "embedded_delimiter"],
+          "dirty_examples": [", ", "on", "Y"] },
+        { "name": "exposure_amount", "type": "decimal", "params": { "min": 0, "max": 5000000 },
+          "scale": 2, "edge_values": [0, 0.01] },
+        { "name": "booking_date", "type": "date",
+          "params": { "start": "2015-01-01", "end": "today" }, "edge_values": ["2020-02-29"] },
+        { "name": "email", "type": "email" }
+      ]
+    }
+  ]
+}

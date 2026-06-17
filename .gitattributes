@@ -1,0 +1,9 @@
+# Normalise line endings so launchers work on the OS they're meant for.
+* text=auto
+*.sh        text eol=lf
+*.command   text eol=lf
+*.py        text eol=lf
+*.json      text eol=lf
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
