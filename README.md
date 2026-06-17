@@ -21,7 +21,7 @@ reproducible seeded output. **Pure Python, no LLM.**
 - [Project diagram](#project-diagram)
 - [Requirements](#requirements)
 - [Install & run (how to run it)](#install--run-how-to-run-it)
-- [The app — four tabs](#the-app--four-tabs)
+- [The app — five tabs](#the-app--five-tabs)
 - [Schema import — three formats](#schema-import--three-formats)
 - [Banking presets](#banking-presets)
 - [Configuration reference](#configuration-reference)
@@ -99,7 +99,7 @@ flowchart TD
     end
 
     subgraph FRONTENDS["🖥️ Front-ends"]
-        APP["app.py<br/>Streamlit UI · 4 tabs"]
+        APP["app.py<br/>Streamlit UI · 5 tabs"]
         CLI["sdgen/cli.py<br/>command line"]
     end
 
@@ -219,9 +219,9 @@ pytest
 
 ---
 
-## The app — four tabs
+## The app — five tabs
 
-A five-step flow across four tabs, with a sidebar for run-time overrides
+A flow across five tabs, with a sidebar for run-time overrides
 (seed, dirty ratio, coverage mode + cap, output formats, CSV byte options).
 
 1. **🚀 Start here** — a 3-step explainer, one-click worked examples
@@ -232,11 +232,20 @@ A five-step flow across four tabs, with a sidebar for run-time overrides
    formats (see below) and the columns/types are drafted for you, or load a
    banking preset / append preset columns.
 
-3. **🧩 Config (JSON/YAML)** — the reproducible source of truth. Edit it, hit
+3. **🧱 Schema editor** — the imported (or preset) schema as an **editable grid,
+   one row per column** — so you don't have to hand-edit JSON for a big pasted
+   DDL/XML/SQL\*Loader file. Set each column's **data type** (dropdown), **length**,
+   **expected values** (the enum domain), scale, nullable/unique, null %, weights,
+   edge values, dirty examples/kinds, `params` (JSON for min/max/dates) and
+   description; edit per-table row counts and cross-column constraints; add/remove
+   columns; then **Apply** to write it back to the config. Multi-table configs get
+   one grid per table (primary/foreign keys are preserved).
+
+4. **🧩 Config (JSON/YAML)** — the reproducible source of truth. Edit it, hit
    **Validate**, and download as JSON **or** YAML. JSON and YAML are both accepted
    in the editor and auto-detected.
 
-4. **▶️ Generate** — staged progress, then:
+5. **▶️ Generate** — staged progress, then:
    - **dirty cells highlighted** (🟥 corrupted cell · 🟨 the `_defect` tag),
    - a row-view filter (**All / Dirty only / Clean only**),
    - a **"negative-test pack"** download (dirty rows only, CSV),
@@ -573,7 +582,7 @@ importers, and writers never change. Full tree:
 
 ```
 sample-data-generator-v4/
-├── app.py                      # Streamlit web UI (4 tabs)
+├── app.py                      # Streamlit web UI (5 tabs)
 ├── requirements.txt            # runtime dependencies
 ├── requirements-dev.txt        # runtime deps + pytest
 ├── run.sh / run.command        # macOS / Linux launchers
@@ -601,7 +610,7 @@ sample-data-generator-v4/
 
 | File | What it does | Why it exists (purpose) |
 |---|---|---|
-| **`app.py`** | The Streamlit UI: four tabs (Start here · Import/Presets · Config · Generate), sidebar overrides, dirty-cell highlighting, KPI cards, FK-integrity panel, charts, downloads. | A no-code front-end so non-developers can produce test data and see exactly which rows are dirty and why. |
+| **`app.py`** | The Streamlit UI: five tabs (Start here · Import/Presets · **Schema editor** · Config · Generate), sidebar overrides, the per-column grid editor, dirty-cell highlighting, KPI cards, FK-integrity panel, charts, downloads. | A no-code front-end so non-developers can produce test data, refine the schema visually, and see exactly which rows are dirty and why. |
 | **`sdgen/__init__.py`** | Re-exports the public API (`generate`, `load_config_file`, `validate_config`, `coverage_report`, the dataclasses, the enums) and defines `__version__`. | Single, stable import surface — `from sdgen import generate`. |
 | **`sdgen/types.py`** | Defines the core enums: `LogicalType` (25 column types), `DirtyKind` (13 defect kinds), `OutputFormat`, the coverage-mode list, and the per-type "which defects are valid" gating maps. | The shared vocabulary every other module speaks; keeps types/defects in one place. |
 | **`sdgen/model.py`** | The config object model — `GenerationConfig`, `TableSpec`, `ColumnSpec`, `ForeignKey`, `CoverageSpec` dataclasses — plus JSON/YAML load/dump (`load_config`, `to_json`, `to_yaml`) and `validate_config`. | Turns text config into validated, typed objects; the config *is* the reproducible artifact. |

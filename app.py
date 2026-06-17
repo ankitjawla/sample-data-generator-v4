@@ -223,6 +223,141 @@ def _ds_to_df(ds):
     return pd.DataFrame([{c: r.get(c) for c in ds.header} for r in ds.rows], columns=ds.header)
 
 
+# ----------------------------------------------------------------------------
+# Schema editor (visual column grid) — round-trip helpers
+# ----------------------------------------------------------------------------
+_TYPE_VALUES = [t.value for t in LogicalType]
+_DIRTY_VALUES = [d.value for d in DirtyKind]
+_SCHEMA_COLS = ["name", "type", "max_length", "expected_values", "nullable", "unique",
+                "null_probability", "scale", "weights", "edge_values", "dirty_examples",
+                "dirty_kinds", "params", "description"]
+
+
+def _smart(v):
+    """Cast a pasted token to int/float when it looks numeric, else keep the string."""
+    s = str(v).strip()
+    if s == "":
+        return s
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        return s
+
+
+def _parse_list(text):
+    """Split a comma-separated cell into a typed list (empty -> [])."""
+    s = "" if text is None else str(text).strip()
+    return [_smart(p) for p in (p.strip() for p in s.split(",")) if p != ""] if s else []
+
+
+def _list_to_text(values):
+    return ", ".join(str(v) for v in values) if values else ""
+
+
+def _b(v):
+    """Safe bool from a grid cell (NaN/None -> False; avoids bool(nan)==True)."""
+    return bool(v) if pd.notna(v) else False
+
+
+def _s(v):
+    """Safe str from a grid cell (NaN/None -> '')."""
+    return str(v) if pd.notna(v) else ""
+
+
+def _columns_to_rows(tbl):
+    """A config table dict -> one grid row per column."""
+    rows = []
+    for c in tbl.get("columns", []):
+        params = c.get("params") or {}
+        rows.append({
+            "name": c.get("name", ""),
+            "type": c.get("type", "string"),
+            "max_length": c.get("max_length"),
+            "expected_values": _list_to_text(c.get("allowed_values")),
+            "nullable": bool(c.get("nullable", False)),
+            "unique": bool(c.get("unique", False)),
+            "null_probability": float(c.get("null_probability", 0.0) or 0.0),
+            "scale": c.get("scale"),
+            "weights": _list_to_text(c.get("weights")),
+            "edge_values": _list_to_text(c.get("edge_values")),
+            "dirty_examples": _list_to_text(c.get("dirty_examples")),
+            "dirty_kinds": _list_to_text(c.get("dirty_kinds")),
+            "params": json.dumps(params) if params else "",
+            "description": c.get("description", ""),
+        })
+    return rows
+
+
+def _schema_dataframe(tbl):
+    """Build a typed DataFrame the data_editor can render cleanly."""
+    df = pd.DataFrame(_columns_to_rows(tbl), columns=_SCHEMA_COLS)
+    for c in ("max_length", "scale", "null_probability"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    for c in ("nullable", "unique"):
+        df[c] = df[c].fillna(False).astype(bool)
+    for c in ("name", "type", "expected_values", "weights", "edge_values",
+              "dirty_examples", "dirty_kinds", "params", "description"):
+        df[c] = df[c].fillna("").astype(str)
+    return df
+
+
+def _rows_to_columns(edited_df):
+    """Edited grid -> list of config column dicts (nameless rows dropped)."""
+    cols = []
+    for _, r in edited_df.iterrows():
+        name = _s(r.get("name")).strip()
+        if not name:
+            continue
+        col = {"name": name, "type": _s(r.get("type")).strip() or "string"}
+        if _b(r.get("nullable")):
+            col["nullable"] = True
+            npv = r.get("null_probability")
+            npv = float(npv) if pd.notna(npv) else 0.0
+            if npv:
+                col["null_probability"] = npv
+        if _b(r.get("unique")):
+            col["unique"] = True
+        ml = r.get("max_length")
+        if pd.notna(ml) and _s(ml) != "":
+            col["max_length"] = int(float(ml))
+        sc = r.get("scale")
+        if pd.notna(sc) and _s(sc) != "":
+            col["scale"] = int(float(sc))
+        av = _parse_list(_s(r.get("expected_values")))
+        if av:
+            col["allowed_values"] = av
+        wt = _parse_list(_s(r.get("weights")))
+        if wt:
+            col["weights"] = [float(x) for x in wt]
+        ev = _parse_list(_s(r.get("edge_values")))
+        if ev:
+            col["edge_values"] = ev
+        de = _parse_list(_s(r.get("dirty_examples")))
+        if de:
+            col["dirty_examples"] = de
+        dk = [p.strip() for p in _s(r.get("dirty_kinds")).split(",")
+              if p.strip() in _DIRTY_VALUES]
+        if dk:
+            col["dirty_kinds"] = dk
+        pj = _s(r.get("params")).strip()
+        if pj:
+            try:
+                parsed = json.loads(pj)
+                if isinstance(parsed, dict) and parsed:
+                    col["params"] = parsed
+            except Exception:
+                pass
+        desc = _s(r.get("description")).strip()
+        if desc:
+            col["description"] = desc
+        cols.append(col)
+    return cols
+
+
 _DEFAULT_CONFIG = {
     "seed": 42, "dirty_ratio": 0.05, "coverage": {"mode": "edges"},
     "tables": [{
@@ -274,8 +409,9 @@ with st.sidebar:
 
 csv_opts = CsvOptions(delimiter=csv_delim or ",", quoting=csv_quote, encoding=csv_enc, bom=csv_bom)
 
-tab_guide, tab_import, tab_config, tab_generate = st.tabs(
-    ["🚀 Start here", "📥 Import / Presets", "🧩 Config (JSON/YAML)", "▶️ Generate"])
+tab_guide, tab_import, tab_schema, tab_config, tab_generate = st.tabs(
+    ["🚀 Start here", "📥 Import / Presets", "🧱 Schema editor",
+     "🧩 Config (JSON/YAML)", "▶️ Generate"])
 
 # ---- Tab: Start here / Guide ----
 with tab_guide:
@@ -292,9 +428,10 @@ with tab_guide:
         st.caption("Paste a `CREATE TABLE` or load a banking preset on the **Import / Presets** tab. "
                    "`CHECK (… IN …)` lists become your expected values; `REFERENCES` become FKs.")
     with g2.container(border=True):
-        st.markdown("#### 2 · Tune the JSON config")
-        st.caption("The **Config (JSON)** tab is the source of truth. Set seed, dirty ratio and "
-                   "coverage in the sidebar; edit columns/faults in the JSON.")
+        st.markdown("#### 2 · Refine the columns")
+        st.caption("Use the **🧱 Schema editor** to set each column's type, length and expected "
+                   "values in a grid (no JSON), or edit the **Config (JSON)** directly. Set seed, "
+                   "dirty ratio and coverage in the sidebar.")
     with g3.container(border=True):
         st.markdown("#### 3 · Generate & download")
         st.caption("Hit **Generate** — clean vs **dirty** cells are highlighted, with a defect "
@@ -376,8 +513,9 @@ with tab_import:
                 st.session_state.config_json = cfg.to_json()
                 ncol = sum(len(t.columns) for t in cfg.tables)
                 st.toast(f"Imported {len(cfg.tables)} table(s) · {ncol} columns", icon="📥")
-                st.success(f"Imported {len(cfg.tables)} table(s), {ncol} columns. Open the Config tab "
-                           "to refine expected values & faults, then Generate.")
+                st.success(f"Imported {len(cfg.tables)} table(s), {ncol} columns. Open the "
+                           "🧱 **Schema editor** tab to set data types, lengths & expected values "
+                           "per column (or edit the raw JSON in the Config tab), then Generate.")
             except Exception as e:
                 st.error(f"Could not parse: {e}")
 
@@ -405,6 +543,109 @@ with tab_import:
                     data["tables"][0]["columns"].append(_column_to_dict(PRESET_COLUMNS[label]()))
                 st.session_state.config_json = json.dumps(data, indent=2)
                 st.success(f"Added {len(cols)} column(s) to '{data['tables'][0]['name']}'.")
+
+# ---- Tab: Schema editor (visual column grid) ----
+with tab_schema:
+    st.markdown(
+        '<div class="how-banner">🧱 <b>Edit the schema as a table — one row per column.</b> '
+        'After importing a big DDL / XML / SQL*Loader file, set each column\'s <b>data type</b>, '
+        '<b>length</b> and <b>expected values</b> here without touching JSON. Edit the grid, then '
+        '<b>Apply</b> to write it back to the config.</div>',
+        unsafe_allow_html=True)
+    st.write("")
+
+    try:
+        _schema_cfg = load_config(st.session_state.config_json).to_dict()
+        _schema_err = None
+    except Exception as exc:
+        _schema_cfg, _schema_err = None, str(exc)
+
+    if _schema_err:
+        st.error(f"Fix the config before editing the schema: {_schema_err}")
+    elif not _schema_cfg.get("tables"):
+        st.info("No tables yet — import a schema or load a preset on the 📥 Import / Presets tab.")
+    else:
+        st.caption("`expected values`, `edge values`, `dirty examples` and `weights` are "
+                   "comma-separated. `params` is JSON, e.g. "
+                   '`{"min":0,"max":1000}` or `{"start":"2015-01-01","end":"today"}`. '
+                   "Use the grid's ➕ / 🗑 controls to add or remove columns.")
+        edited_tables = []  # (table_dict, rows_value, edited_df)
+        for ti, tbl in enumerate(_schema_cfg["tables"]):
+            st.markdown(f"#### 🗂️ Table: `{tbl.get('name', 'table')}`")
+            rc1, rc2 = st.columns([1, 3])
+            rows_val = rc1.number_input("Rows", min_value=1, max_value=10_000_000,
+                                        value=int(tbl.get("rows", 1000)), step=100,
+                                        key=f"schema_rows_{ti}")
+            note = []
+            if tbl.get("primary_key"):
+                note.append("PK: " + ", ".join(tbl["primary_key"]))
+            if tbl.get("foreign_keys"):
+                note.append("FK: " + ", ".join(f"{fk['column']}→{fk['ref_table']}"
+                                                for fk in tbl["foreign_keys"]))
+            if note:
+                rc2.caption(" · ".join(note) + "  — kept as-is (edit keys in the Config tab)")
+
+            edited = st.data_editor(
+                _schema_dataframe(tbl), key=f"schema_editor_{ti}", use_container_width=True,
+                num_rows="dynamic", hide_index=True,
+                column_config={
+                    "name": st.column_config.TextColumn("name"),
+                    "type": st.column_config.SelectboxColumn("type", options=_TYPE_VALUES),
+                    "max_length": st.column_config.NumberColumn(
+                        "length", min_value=0, step=1, help="Max length for string columns."),
+                    "expected_values": st.column_config.TextColumn(
+                        "expected values",
+                        help="Allowed/expected values (the enum domain), comma-separated."),
+                    "nullable": st.column_config.CheckboxColumn("nullable"),
+                    "unique": st.column_config.CheckboxColumn("unique"),
+                    "null_probability": st.column_config.NumberColumn(
+                        "null %", min_value=0.0, max_value=1.0, step=0.01, format="%.2f"),
+                    "scale": st.column_config.NumberColumn(
+                        "scale", min_value=0, step=1, help="Decimal places."),
+                    "weights": st.column_config.TextColumn(
+                        "weights", help="Enum sampling weights, comma-separated (match expected values)."),
+                    "edge_values": st.column_config.TextColumn(
+                        "edge values", help="Values guaranteed to appear in the output."),
+                    "dirty_examples": st.column_config.TextColumn(
+                        "dirty examples", help="Forced bad values to inject as dirty data."),
+                    "dirty_kinds": st.column_config.TextColumn(
+                        "dirty kinds",
+                        help="Restrict defect kinds (comma-separated). Valid: " + ", ".join(_DIRTY_VALUES)),
+                    "params": st.column_config.TextColumn(
+                        "params (JSON)", help='e.g. {"min":0,"max":1000} or {"start":"2015-01-01","end":"today"}'),
+                    "description": st.column_config.TextColumn("description"),
+                })
+            edited_tables.append((tbl, int(rows_val), edited))
+
+            tbl["_constraints_new"] = st.text_area(
+                "Cross-column constraints (one per line, e.g. `start_date <= end_date`)",
+                "\n".join(tbl.get("constraints", []) or []), height=70, key=f"schema_cons_{ti}")
+            st.divider()
+
+        if st.button("✅ Apply schema changes to config", type="primary"):
+            try:
+                for tbl, rows_val, edited in edited_tables:
+                    tbl["rows"] = rows_val
+                    tbl["columns"] = _rows_to_columns(edited)
+                    cons_list = [ln.strip() for ln in str(tbl.pop("_constraints_new", "")).splitlines()
+                                 if ln.strip()]
+                    if cons_list:
+                        tbl["constraints"] = cons_list
+                    else:
+                        tbl.pop("constraints", None)
+                new_cfg = config_from_dict(_schema_cfg)
+                st.session_state.config_json = new_cfg.to_json()
+                errs = validate_config(new_cfg)
+                ncols = sum(len(t.columns) for t in new_cfg.tables)
+                if errs:
+                    st.warning("Applied, but the config has issues:\n- " + "\n- ".join(errs))
+                else:
+                    st.success(f"Applied · {len(new_cfg.tables)} table(s) · {ncols} columns. "
+                               "Open the Config or ▶️ Generate tab.")
+                st.toast("Schema applied to config", icon="🧱")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not apply schema: {exc}")
 
 # ---- Tab: Config (JSON / YAML) ----
 with tab_config:
