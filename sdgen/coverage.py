@@ -19,7 +19,7 @@ def _combo_columns(t: TableSpec, restrict: Optional[List[str]]) -> Dict[str, Lis
     for c in t.columns:
         if restrict is not None and c.name not in restrict:
             continue
-        if c.type == LogicalType.ENUM and c.allowed_values:
+        if c.allowed_values:  # enum, or any column given an explicit value domain
             out[c.name] = list(c.allowed_values)
         elif c.type == LogicalType.BOOLEAN:
             out[c.name] = [True, False]
