@@ -234,14 +234,21 @@ _SCHEMA_COLS = ["name", "type", "max_length", "expected_values", "nullable", "un
 
 
 def _smart(v):
-    """Cast a pasted token to int/float when it looks numeric, else keep the string."""
+    """Cast a pasted token to int/float when it looks numeric, else keep the string.
+
+    Keeps zero-padded codes ("007", "01") and nan/inf-like tokens as strings, so
+    expected values that are really identifiers (LEI, ISO/branch codes) aren't
+    silently mangled into numbers.
+    """
     s = str(v).strip()
     if s == "":
         return s
-    try:
-        return int(s)
-    except ValueError:
-        pass
+    body = s[1:] if s[:1] in "+-" else s
+    if body.isdigit():
+        # plain integer — but a leading zero ("007") means it's a code, keep as text
+        return int(s) if (body == "0" or body[0] != "0") else s
+    if s.lower().lstrip("+-") in ("nan", "inf", "infinity"):
+        return s  # don't turn the strings "nan"/"inf" into floats
     try:
         return float(s)
     except ValueError:
@@ -305,8 +312,12 @@ def _schema_dataframe(tbl):
     return df
 
 
-def _rows_to_columns(edited_df):
-    """Edited grid -> list of config column dicts (nameless rows dropped)."""
+def _rows_to_columns(edited_df, warnings=None):
+    """Edited grid -> list of config column dicts (nameless rows dropped).
+
+    Appends a human-readable note to ``warnings`` (if given) for anything quietly
+    dropped — e.g. a column whose ``params`` cell isn't valid JSON.
+    """
     cols = []
     for _, r in edited_df.iterrows():
         name = _s(r.get("name")).strip()
@@ -330,9 +341,14 @@ def _rows_to_columns(edited_df):
         av = _parse_list(_s(r.get("expected_values")))
         if av:
             col["allowed_values"] = av
-        wt = _parse_list(_s(r.get("weights")))
+        wt = []
+        for x in _parse_list(_s(r.get("weights"))):
+            try:
+                wt.append(float(x))
+            except (TypeError, ValueError):
+                pass  # drop a stray non-numeric weight rather than aborting Apply
         if wt:
-            col["weights"] = [float(x) for x in wt]
+            col["weights"] = wt
         ev = _parse_list(_s(r.get("edge_values")))
         if ev:
             col["edge_values"] = ev
@@ -349,8 +365,12 @@ def _rows_to_columns(edited_df):
                 parsed = json.loads(pj)
                 if isinstance(parsed, dict) and parsed:
                     col["params"] = parsed
+                elif warnings is not None:
+                    warnings.append(f"`{name}`: params must be a JSON object like "
+                                    '`{"min":0,"max":100}` — ignored.')
             except Exception:
-                pass
+                if warnings is not None:
+                    warnings.append(f"`{name}`: params is not valid JSON (`{pj}`) — ignored.")
         desc = _s(r.get("description")).strip()
         if desc:
             col["description"] = desc
@@ -627,9 +647,10 @@ with tab_schema:
 
         if st.button("✅ Apply schema changes to config", type="primary"):
             try:
+                warns: list = []
                 for tbl, rows_val, edited in edited_tables:
                     tbl["rows"] = rows_val
-                    tbl["columns"] = _rows_to_columns(edited)
+                    tbl["columns"] = _rows_to_columns(edited, warns)
                     cons_list = [ln.strip() for ln in str(tbl.pop("_constraints_new", "")).splitlines()
                                  if ln.strip()]
                     if cons_list:
@@ -640,6 +661,8 @@ with tab_schema:
                 st.session_state.config_json = new_cfg.to_json()
                 errs = validate_config(new_cfg)
                 ncols = sum(len(t.columns) for t in new_cfg.tables)
+                if warns:
+                    st.warning("Some cells were ignored:\n- " + "\n- ".join(warns))
                 if errs:
                     st.warning("Applied, but the config has issues:\n- " + "\n- ".join(errs))
                 else:
